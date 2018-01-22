@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-    # Indent size (for github)
+    #indent size
 
 AUTHOR = "Jonah Haney"
-VERSION = "2017.10.14"
+VERSION = "2018.1.21"
 
 import sys
 import argparse
@@ -18,7 +18,7 @@ parser.add_argument("f", metavar = "<image>", help = "Specify image file(s) to o
 command.add_argument("-w", metavar = "<text>", help = "Write watermark (text)", default = None)
 command.add_argument("-W", metavar = "<file>", help = "Write watermark from file", default = None)
 command.add_argument("-r", help = "Read watermark (one file only)", action = "store_true", default = False)
-parser.add_argument("-o", metavar = "<file>", help = "Specify output file (write to stdout if none)", default = None)
+parser.add_argument("-o", metavar = "<file>", help = "Specify output file (write to stdout if none)", default = sys.stdout.buffer)
 parser.add_argument("-R", help = "Use Red byte", action = "store_true", default = False)
 parser.add_argument("-G", help = "Use Green byte", action = "store_true", default = False)
 parser.add_argument("-B", help = "Use Blue byte", action = "store_true", default = False)
@@ -69,22 +69,30 @@ def fimage(file_name, mode):
 		return None
 
 # Manage arguments
-orig = fimage(args.f, "rb").convert("RGB")
-outf = None
-mark = None
+orig = fimage(args.f, "rb")
+fmt = orig.format
+orig = orig.convert("RGB")
+outf = args.o
+mark = []
 
 if orig == None:
 	terminate(None)
 
-if args.o != None:
-	outf = fopen(args.o, "w")
-else:
-	outf = sys.stdout
+if outf != sys.stdout.buffer:
+	outf = fopen(args.o, "wb")
 
 if args.w != None:
-	mark = args.w
+	_mark = bytes([ord(args.w[i]) for i in range(len(args.w))])
+	for c in _mark:
+		for i in range(8):
+			mark.append((int(c) & (0b10000000 >> i)) >> 7 - i)
+
 elif args.W != None:
-	mark = fopen(args.W, "r").read()
+	_mark = fopen(args.W, "rb").read()
+	for c in _mark:
+		for i in range(8):
+			mark.append((int(c) & (0b10000000 >> i)) >> 7 - i)
+
 
 if not (args.R or args.G or args.B):
 	colors = [0, 1, 2]
@@ -113,11 +121,33 @@ if args.r:
 		b = b[:-(len(b) % 8)]
 	b = ''.join(b)
 	for i in range(0, len(b), 8):
-		outf.write(chr(int(b[i:i+8], 2)))
+		outf.write(bytes([int(b[i:i+8], 2)]))
 
 # TODO Write watermark
 else:
+	i = 0
+	flag = False
 	for y in range(h):
 		for x in range(w):
 			if args.V:
 				x^=y; y^=x; x^=y # Swap x & y
+			pix = list(orig.getpixel((x,y)))
+			for c in colors:
+				pix[c] = (pix[c] & 0b11111110) | mark[i]
+				i += 1
+				if i == len(mark):
+					i = 0
+					flag = True
+			orig.putpixel((x,y), (*pix,))
+	
+	if outf == sys.stdout.buffer:
+		tmp_name = ".tmp." + fmt
+		orig.save(tmp_name)
+		outf.write(fopen(tmp_name, "rb").read())
+	else:
+		orig.save(args.o)
+
+	if not flag:
+		log("Success. NOTE: image too small to store entire watermark")
+	else:
+		log("Success.")
